@@ -12,6 +12,8 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
     #    diag: useful for debugging - plots diagnostic plots if true.
     highvel = v_helio + 500.
     lowvel = v_helio - 500.
+    
+    #the paper defines the range of velocities to search as the 1000 km/s around the profile's heliocentric velocity. this finds the indices related to those velocities
     search_highvelind = np.argmin([np.abs(v-highvel) for v in vels])
     search_lowvelind = np.argmin([np.abs(v-lowvel) for v in vels])
     lowind = np.minimum(search_highvelind, search_lowvelind)
@@ -85,6 +87,7 @@ def find_first_zero(array, interpolate = False):
         upper = lower+1
         slope = (array[upper]-array[lower])
         b = array[upper]-slope*float(upper)
+        
         if slope != 0:
             zval = -b/slope
         else: 
@@ -116,8 +119,11 @@ def calculate_full_integral(flux, velocities, vel_cent, low_bound, high_bound, w
     #these help us determine where the "flat part of our curve of growth" begins, which is important for normalization and finding the flux
     velgrad = np.gradient(sel_int)
     cross_ind = find_first_zero(velgrad)
-    
+
     flux_val = np.median(sel_int[cross_ind:])
+    if flux_val == 0:
+        #this is a contingency measure 
+        flux_val = np.amax(sel_int[cross_ind:])
     normalized_cog = [f/flux_val for f in sel_int]
     
     if diag:
@@ -137,8 +143,8 @@ def calculate_full_integral(flux, velocities, vel_cent, low_bound, high_bound, w
 def find_velocity(normalized_curve, velocity_thresh, velocities, interpolate = False):
     '''given a normalized curve of growth, finds the width of the profile at velocity_thresh percent of the flux density.'''
     curve_through_thresh = [n-velocity_thresh for n in normalized_curve]
+
     first_zero_ind = find_first_zero(curve_through_thresh, interpolate = interpolate)
-    
     if first_zero_ind.is_integer():
         rotvel = velocities[first_zero_ind]
     else:
@@ -150,40 +156,43 @@ def find_velocity(normalized_curve, velocity_thresh, velocities, interpolate = F
     return rotvel
 
 
-def new_cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, diagnose = False, interp = False):
-    ''' this is really the wrapper that you call outside of this script to get er all done in one place.'''
-    #arguments:
-    #    vel_thresh: the fraction of the integrated flux that defines the velocity width
-    #    which_cog: this tells whether you calculate using just the profile integrated to higher velocities (-1), lower velocities (1), or using the full profile (0)
-    #    diag: for diagnosing problems - if true, each method spits out diagnostic images.
-
-    center, low_integrange, high_integrange = find_velrange_centvel(velocities, v_helio, flux, diag = diagnose)
-    centind = np.argmin([np.abs(v-center) for v in velocities])
-    
-    if which_cog == 0:
-        vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,np.minimum(centind-low_integrange, high_integrange-centind))]
-    elif which_cog == -1:
-        vels_for_cog = [velocities[centind]+velocities[centind-j] for j in range(1,centind-low_integrange)]
-    else:
-        vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,high_integrange-centind)]
-    flux, norm_cog = calculate_full_integral(flux, velocities, centind, low_integrange, high_integrange, which_integral = which_cog, diag = diagnose)
-    
-    vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
-    return vel
-
 def cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, diagnose = False, interp = False):
     ''' this is really the wrapper that you call outside of this script to get er all done in one place.'''
     #arguments:
     #    vel_thresh: the fraction of the integrated flux that defines the velocity width
     #    which_cog: this tells whether you calculate using just the profile integrated to higher velocities (-1), lower velocities (1), or using the full profile (0)
     #    diag: for diagnosing problems - if true, each method spits out diagnostic images.
-
     center, low_integrange, high_integrange = find_velrange_centvel(velocities, v_helio, flux, diag = diagnose)
     centind = np.argmin([np.abs(v-center) for v in velocities])
     
-    vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,np.minimum(centind-low_integrange, high_integrange-centind))]
+    if which_cog == 0:
+        vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,np.minimum(centind-low_integrange, high_integrange-centind))]
+    elif which_cog == -1:
+        vels_for_cog = [velocities[centind-j]-velocities[centind] for j in range(1,centind-low_integrange)]
+    else:
+        vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,high_integrange-centind)]
+        
     flux, norm_cog = calculate_full_integral(flux, velocities, centind, low_integrange, high_integrange, which_integral = which_cog, diag = diagnose)
     
+    vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
+    return vel
+
+def old_cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, diagnose = False, interp = False):
+    ''' this is really the wrapper that you call outside of this script to get er all done in one place.'''
+    #arguments:
+    #    vel_thresh: the fraction of the integrated flux that defines the velocity width
+    #    which_cog: this tells whether you calculate using just the profile integrated to higher velocities (-1), lower velocities (1), or using the full profile (0)
+    #    diag: for diagnosing problems - if true, each method spits out diagnostic images.
+
+    #first, find the center and edges of the "range of interest" - N channels around center define the probable line, low_integrange = 1.5N lower index than center, high_integrange = 1.5N higher index than center
+    center, low_integrange, high_integrange = find_velrange_centvel(velocities, v_helio, flux, diag = diagnose)
+    #the center above is an intensity weighted average, so it doesn't necessarily align exactly with a channel index - this finds the closest channel
+    centind = np.argmin([np.abs(v-center) for v in velocities])
+    #this redefines the velocity axis relative to the central velocity channel    
+    vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,np.minimum(centind-low_integrange, high_integrange-centind))]
+    #this calculates the normalized full curve of growth (returned as norm_cog), where the cog = 1 when the integrated flux under the line = flux.
+    flux, norm_cog = calculate_full_integral(flux, velocities, centind, low_integrange, high_integrange, which_integral = which_cog, diag = diagnose)
+    #this uses the normalized curve of growth, along with the fractional threshold for the velocity
     vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
     return vel
 
