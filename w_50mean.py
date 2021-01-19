@@ -140,7 +140,7 @@ def cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, 
     #just changed from cogvel version...    
     flux, norm_cog = calculate_full_integral(flux, velocities, centind, low_integrange, high_integrange, which_integral = which_cog, diag = diagnose)
     
-    vel = cogvel.find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
+    vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
     return vel
 
 
@@ -223,8 +223,8 @@ def w_mean50(fullprof, fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof =
     flux, norm_cog_2 = calculate_full_integral(fullprof, fullvels, centind, low, high, rms, which_integral = 1, diag = diagnose)
    
     #this finds 95% of the integrated flux on either side of the profile
-    vel_1 = cogvel.find_velocity(norm_cog_1, 0.95, vels_for_cog_1, interpolate = True)
-    vel_2 = cogvel.find_velocity(norm_cog_2, 0.95, vels_for_cog_2, interpolate = True)
+    vel_1 = find_velocity(norm_cog_1, 0.95, vels_for_cog_1, interpolate = True)
+    vel_2 = find_velocity(norm_cog_2, 0.95, vels_for_cog_2, interpolate = True)
     
     leftind = np.argmin([np.abs(v-(mean-vel_1)) for v in fullvels])
     rightind = np.argmin([np.abs(v-(mean+vel_2)) for v in fullvels])
