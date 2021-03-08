@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+import cog_velocities as cogvel
 
 ###------------------------------------ DEPENDENCIES ------------------------- 
 def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = False):
@@ -62,7 +62,12 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
     int_fluxes = flux_of_interest[vel_lowind: vel_upind]
     #intensity weighted mean velocity is: divide the (channel flux*velocity) / (integrated flux)
     int_meanvel = np.trapz([v*f for v,f in zip(int_vels, int_fluxes)], int_vels) / np.trapz(int_fluxes, int_vels)
-
+    meanvel_ind = np.argmin([np.abs(v-int_meanvel) for v in vels_of_interest])
+    
+    if meanvel_ind < vel_lowind or meanvel_ind > vel_upind:
+        #print 'uh oh, outside region of interest!'
+        meanvel_ind = (vel_lowind + vel_upind)/2
+        int_meanvel = vels_of_interest[meanvel_ind]
     #FOR DIAGNOSTIC / DEBUGGING PURPOSES:
     #this plot makes sure we're selecting sensical reasons with our consec_flux.
     if diag:
@@ -73,7 +78,13 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
             ax.fill_between(consecutive_inds[i], consec_flux[i], color = 'black', alpha = 0.2)
         for i in range(len(abovethresh_inds)):
             ax.fill_between(abovethresh_inds[i], abovethresh_fluxes[i], color = 'black', alpha = 0.7)
+        ax.plot([meanvel_ind, meanvel_ind],[np.amin(profile), np.amax(profile)])
+        ax.plot([vel_lowind, vel_lowind],[np.amin(profile), np.amax(profile)], c = 'black')
+        ax.plot([vel_upind, vel_upind],[np.amin(profile), np.amax(profile)], c = 'black')
         plt.show()
+        
+        print 'int_meanvel = ',int_meanvel, 'numerator trapz', np.trapz([v*f for v,f in zip(int_vels, int_fluxes)], int_vels), 'denom trapz', np.trapz(int_fluxes, int_vels)
+        print 'interval of interest...', vel_lowind,vel_upind
 
     #we need to also return indices for the region of interest we integrate the curve of growth over...
     #we will also take care of the case that this is beyond the boundaries of the profile here as well...
@@ -115,9 +126,17 @@ def find_velocity(normalized_curve, velocity_thresh, velocities, interpolate = F
     else:
         #this interpolates the velocity to the non-integer index found if interpolate = True
         int_index = int(first_zero_ind)
-        delta = velocities[int_index+1] - velocities[int_index]
-        vel_delt = (first_zero_ind - float(int_index))*delta
-        rotvel = velocities[int_index] + vel_delt
+        #okay... this is a TEMPORARY STOPGAP to prevent 
+        if int_index < len(velocities) and int_index > 0:
+            delta = velocities[int_index+1] - velocities[int_index]
+            vel_delt = (first_zero_ind - float(int_index))*delta
+            rotvel = velocities[int_index] + vel_delt
+        elif int_index == 0:
+            rotvel = velocities[0]
+        elif len(velocities) == 0:
+            rotvel = 0.
+        else:
+            rotvel = velocities[len(velocities)-1]
     return rotvel
 
 #### --------------------------------- VELOCITIES ---------------------------------------
@@ -153,60 +172,49 @@ def calculate_full_integral(flux, velocities, vel_cent, low_bound, high_bound, r
     #    velocities: velocities that correspond to the channels in flux
     #    vel_cent: the rounded channel index of the intensity weighted mean velocity for the real emission in the profile
     #    low_bound, high_bound: the bounds for the region used to calculate the curve of growth
-    
     #the 0.001 here converts the fluxes from mJy km/s to Jy km/s
     left_vels = [0.001*np.trapz(flux[i:vel_cent], -velocities[i:vel_cent]) for i in np.arange(vel_cent-1, low_bound, -1)]
     right_vels = [0.001*np.trapz(flux[vel_cent:i], -velocities[vel_cent:i]) for i in np.arange(vel_cent+1, high_bound, 1)]
     full_vels = [l+r for l,r in zip(left_vels,right_vels)]
-   
-    #now we select which vels we are using here:
-    if which_integral == 0:
-        sel_int = full_vels
-        delta_v = np.mean([np.abs(velocities[i]-velocities[i+1]) for i in range(left_vels, right_vels-1)])
-    elif which_integral == -1:
-        sel_int = left_vels
-        delta_v = np.mean([np.abs(velocities[i]-velocities[i+1]) for i in range(low_bound, vel_cent-2)])
-    else:
-        sel_int = right_vels
-        delta_v = np.mean([np.abs(velocities[i]-velocities[i+1]) for i in range(vel_cent+1, high_bound-1)])
     
+    #now we select which vels we are using here:
+    if which_integral == -1 and len(left_vels) > 1:
+        sel_int = left_vels
+    elif which_integral == 1 and len(right_vels) > 1:
+        sel_int = right_vels
+    elif which_integral == 0 and len(full_vels) > 1:
+        sel_int = full_vels
+    else:
+        if len(left_vels) > 1:
+            sel_int = left_vels
+        else:
+            sel_int = right_vels
+            if len(right_vels) < 1:
+                print 'bad news sir!'
     #these help us determine where the "flat part of our curve of growth" begins, which is important for normalization and finding the flux
     velgrad = np.gradient(sel_int)
     cross_ind = find_first_zero(velgrad)
-    
-    #the 0.001 here is so that the rms is in consistent units with the left_vels, right_vels above
-    val_from_peak = [(sel_int[i]-sel_int[cross_ind])/(0.001*rms*np.sqrt(float(i))*delta_v) + 1. for i in range(cross_ind, len(sel_int))]
-    
-    if np.amin(val_from_peak) < 0.:
-        last_ind = find_first_zero(val_from_peak) + cross_ind
-        flux_val = np.median(sel_int[cross_ind:last_ind])
-    else:
-        flux_val = np.median(sel_int[cross_ind:])
-        last_ind = len(sel_int)-1
 
+    flux_val = np.median(sel_int[cross_ind:])
     if flux_val == 0:
         #this is a contingency measure 
         flux_val = np.amax(sel_int[cross_ind:])
-        last_ind = len(sel_int)-1
     normalized_cog = [f/flux_val for f in sel_int]
     
     if diag:
-        #plt.plot([0,len(velgrad)],[0,0])
-        #plt.scatter(cross_ind, 0)
-        #plt.plot(velgrad)
-        #plt.title('Gradient')
-        #plt.show()  
+        plt.plot([0,len(velgrad)],[0,0])
+        plt.scatter(cross_ind, 0)
+        plt.plot(velgrad)
+        plt.title('Gradient')
+        plt.show()  
 
         plt.plot(left_vels)
-        #plt.scatter(cross_ind, full_vels[cross_ind])
+        plt.scatter(cross_ind, full_vels[cross_ind])
         plt.plot(right_vels)
         plt.plot(full_vels)
-        plt.plot(sel_int)
-        plt.scatter(cross_ind, sel_int[cross_ind], label = 'Place where curve of growth is flat')
-        plt.scatter(last_ind, sel_int[last_ind], label = 'Truncation because of decline in COG')
-        plt.title('Curve of growth')
-        plt.legend()
         plt.show()
+    
+    
     return flux_val, normalized_cog
 
 #### final width-finders -- these are the programs that should be called outside of this program once we're done fixing the dependencies - they calculate the profile widths.
@@ -222,13 +230,16 @@ def w_mean50(fullprof, fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof =
     vels_for_cog_2 = [fullvels[centind]-fullvels[centind+j] for j in range(1,high-centind)] 
     flux, norm_cog_2 = calculate_full_integral(fullprof, fullvels, centind, low, high, rms, which_integral = 1, diag = diagnose)
    
+    #if len(norm_cog_2) != len(vels_for_cog_2):
+    #if len(norm_cog_1) != len(vels_for_cog_1):
     #this finds 95% of the integrated flux on either side of the profile
     vel_1 = find_velocity(norm_cog_1, 0.95, vels_for_cog_1, interpolate = True)
     vel_2 = find_velocity(norm_cog_2, 0.95, vels_for_cog_2, interpolate = True)
     
     leftind = np.argmin([np.abs(v-(mean-vel_1)) for v in fullvels])
     rightind = np.argmin([np.abs(v-(mean+vel_2)) for v in fullvels])
-
+    
+    #print 'the indices of the left and right sides of the profile:',leftind,rightind
     #we want to use 50% of the mean flux between the leftind and rightind values?
     meanflux = np.mean(fullprof[rightind:leftind])
     flux_thresh_50 = 0.5*meanflux
@@ -237,7 +248,7 @@ def w_mean50(fullprof, fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof =
     high_max_ind = np.argmax(fullprof[centind:high]) + centind
     
     
-    if float(low_max_ind - low) / float(centind - low) < 0.25:
+    if float(low_max_ind - low) / float(centind - low) < 0.25 and int(1.1*low_max_ind) < centind:
         low_max_ind = np.argmax(fullprof[int(1.1*low_max_ind):centind]) + int(1.1*low_max_ind)
 
     low_region_interest = fullprof[low:low_max_ind] - flux_thresh_50

@@ -42,6 +42,12 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
     mean_cs_fluxes = [np.mean(gp) for gp in consec_flux]
     #now we choose the regions that have flux > mean_thresh*mean maximum flux.
     max_mean = np.max(mean_cs_fluxes)
+    
+    ### UPDATE 12/2: using max flux density rather than max flux per channel. helps with narrow line features outside of line center. to ignore, comment to END OF UPDATE 12/2
+    sum_cs_fluxes = [np.sum(gp) for gp in consec_flux]
+    max_mean = mean_cs_fluxes[np.argmax(sum_cs_fluxes)]
+    ### END OF UPDATE 12/2
+    
     abovethresh_inds = [consecutive_inds[i] for i in range(len(consec_flux)) if mean_cs_fluxes[i] > mean_thresh*max_mean]
     abovethresh_fluxes = [consec_flux[i] for i in range(len(consec_flux)) if mean_cs_fluxes[i] > mean_thresh*max_mean]
     #now that we have the regions above the threshold, we can flatten and then use the minimum and maximum values to get the 
@@ -54,7 +60,13 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
     int_fluxes = flux_of_interest[vel_lowind: vel_upind]
     #intensity weighted mean velocity is: divide the (channel flux*velocity) / (integrated flux)
     int_meanvel = np.trapz([v*f for v,f in zip(int_vels, int_fluxes)], int_vels) / np.trapz(int_fluxes, int_vels)
-
+    meanvel_ind = np.argmin([np.abs(v-int_meanvel) for v in vels_of_interest])
+    # ADDITION 3/5:: one issue for some profiles is that for some reason the integral doesn't give a mean velocity in the region of interest.... this seems strange and problematic to me, but for the time being so things don't crash, we're adding this stopgap measure so if it chooses a not-sensible central velocity, we choose the velocity at the center of the region of interest instead.
+    if meanvel_ind < vel_lowind or meanvel_ind > vel_upind:
+        #print 'uh oh, outside region of interest!'
+        meanvel_ind = (vel_lowind + vel_upind)/2
+        int_meanvel = vels_of_interest[meanvel_ind]
+    
     #FOR DIAGNOSTIC / DEBUGGING PURPOSES:
     #this plot makes sure we're selecting sensical reasons with our consec_flux.
     if diag:
@@ -65,6 +77,8 @@ def find_velrange_centvel(vels, v_helio, profile, mean_thresh = 0.7, diag = Fals
             ax.fill_between(consecutive_inds[i], consec_flux[i], color = 'black', alpha = 0.2)
         for i in range(len(abovethresh_inds)):
             ax.fill_between(abovethresh_inds[i], abovethresh_fluxes[i], color = 'black', alpha = 0.7)
+        #we also want to plot the line of heliocentric velocity
+        ax.plot([meanvel_ind, meanvel_ind],[np.amin(profile), np.amax(profile)])
         plt.show()
 
     #we need to also return indices for the region of interest we integrate the curve of growth over...
@@ -92,6 +106,8 @@ def find_first_zero(array, interpolate = False):
             zval = -b/slope
         else: 
             zval = lower + 0.5
+    if np.isnan(zval):
+        zval = 0.
     return zval
 
 def calculate_full_integral(flux, velocities, vel_cent, low_bound, high_bound, which_integral = 0, diag = False):
@@ -146,7 +162,7 @@ def find_velocity(normalized_curve, velocity_thresh, velocities, interpolate = F
 
     first_zero_ind = find_first_zero(curve_through_thresh, interpolate = interpolate)
     if first_zero_ind.is_integer():
-        rotvel = velocities[first_zero_ind]
+        rotvel = velocities[int(first_zero_ind)]
     else:
         #this interpolates the velocity to the non-integer index found if interpolate = True
         int_index = int(first_zero_ind)
@@ -177,24 +193,7 @@ def cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, 
     vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
     return vel
 
-def old_cog_velocities(velocities, flux, v_helio, vel_thresh = 0.85, which_cog = 0, diagnose = False, interp = False):
-    ''' this is really the wrapper that you call outside of this script to get er all done in one place.'''
-    #arguments:
-    #    vel_thresh: the fraction of the integrated flux that defines the velocity width
-    #    which_cog: this tells whether you calculate using just the profile integrated to higher velocities (-1), lower velocities (1), or using the full profile (0)
-    #    diag: for diagnosing problems - if true, each method spits out diagnostic images.
 
-    #first, find the center and edges of the "range of interest" - N channels around center define the probable line, low_integrange = 1.5N lower index than center, high_integrange = 1.5N higher index than center
-    center, low_integrange, high_integrange = find_velrange_centvel(velocities, v_helio, flux, diag = diagnose)
-    #the center above is an intensity weighted average, so it doesn't necessarily align exactly with a channel index - this finds the closest channel
-    centind = np.argmin([np.abs(v-center) for v in velocities])
-    #this redefines the velocity axis relative to the central velocity channel    
-    vels_for_cog = [velocities[centind]-velocities[centind+j] for j in range(1,np.minimum(centind-low_integrange, high_integrange-centind))]
-    #this calculates the normalized full curve of growth (returned as norm_cog), where the cog = 1 when the integrated flux under the line = flux.
-    flux, norm_cog = calculate_full_integral(flux, velocities, centind, low_integrange, high_integrange, which_integral = which_cog, diag = diagnose)
-    #this uses the normalized curve of growth, along with the fractional threshold for the velocity
-    vel = find_velocity(norm_cog, vel_thresh, vels_for_cog, interpolate = interp)
-    return vel
-
-       
+#def w_mean50(velocities, flux, v_helio, rms, diagnose = False):
+    
 
