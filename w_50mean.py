@@ -219,10 +219,16 @@ def calculate_full_integral(flux, velocities, vel_cent, low_bound, high_bound, r
 
 #### final width-finders -- these are the programs that should be called outside of this program once we're done fixing the dependencies - they calculate the profile widths.
 
-def w_mean50(fullprof, fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof = 10.):
+def w_mean50(fullprof,fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof = 10., pass_vhel = False, lowind = 0, highind = 0):
     #find the (intensity weighted) central velocity of the profile
-    mean, low, high = find_velrange_centvel(fullvels, vhel, fullprof, diag = diagnose)
-        
+    if pass_vhel:
+        #this is so that you can pass the heliocentric velocity from a different v_hel finding method (E.g., from the matched filtering method....
+        mean = vhel
+        low = lowind
+        high = highind
+    else:
+        mean, low, high = find_velrange_centvel(fullvels, vhel, fullprof, diag = diagnose)
+
     centind = np.argmin([np.abs(v-mean) for v in fullvels])
     vels_for_cog_1 = [fullvels[centind-j]-fullvels[centind] for j in range(1,centind-low)]
     flux, norm_cog_1 = calculate_full_integral(fullprof, fullvels, centind, low, high, rms, which_integral = -1, diag = diagnose)
@@ -244,11 +250,17 @@ def w_mean50(fullprof, fullvels, vhel, rms, diagnose = False, w50 = 0, sn_prof =
     meanflux = np.mean(fullprof[rightind:leftind])
     flux_thresh_50 = 0.5*meanflux
     
-    low_max_ind = np.argmax(fullprof[low:centind]) + low
-    high_max_ind = np.argmax(fullprof[centind:high]) + centind
+    if low < centind:
+        low_max_ind = np.argmax(fullprof[low:centind]) + low
+    else:
+        low_max_ind = low
+    if centind < high:
+        high_max_ind = np.argmax(fullprof[centind:high]) + centind
+    else:
+        high_max_ind = centind
     
     
-    if float(low_max_ind - low) / float(centind - low) < 0.25 and int(1.1*low_max_ind) < centind:
+    if float(low_max_ind - low) < 0.25*float(centind - low) and int(1.1*low_max_ind) < centind:
         low_max_ind = np.argmax(fullprof[int(1.1*low_max_ind):centind]) + int(1.1*low_max_ind)
 
     low_region_interest = fullprof[low:low_max_ind] - flux_thresh_50
